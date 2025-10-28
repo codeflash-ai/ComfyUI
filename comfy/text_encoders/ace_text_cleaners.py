@@ -97,33 +97,44 @@ def japanese_to_romaji(japanese_text):
         '、': ', ', '。': '. ',
     }
 
+    # Precompute lookups for combination and small tsu
+    small_tsu_set = {'っ', 'ッ'}
+    small_y_set = {'ゃ', 'ゅ', 'ょ', 'ャ', 'ュ', 'ョ'}
+    vowels_and_n = 'aiueon'
+
+    text_len = len(japanese_text)
     result = []
     i = 0
 
-    while i < len(japanese_text):
+    # Cache kana_map.get as local for improved loop perf
+    get_kana = kana_map.get
+
+    while i < text_len:
+        char = japanese_text[i]
+
         # Check for small tsu (doubling the following consonant)
-        if i < len(japanese_text) - 1 and (japanese_text[i] == 'っ' or japanese_text[i] == 'ッ'):
-            if i < len(japanese_text) - 1 and japanese_text[i+1] in kana_map:
-                next_romaji = kana_map[japanese_text[i+1]]
-                if next_romaji and next_romaji[0] not in 'aiueon':
-                    result.append(next_romaji[0])  # Double the consonant
+        if char in small_tsu_set and i + 1 < text_len:
+            next_char = japanese_text[i + 1]
+            next_romaji = get_kana(next_char)
+            if next_romaji and next_romaji[0] not in vowels_and_n:
+                result.append(next_romaji[0])  # Double the consonant
             i += 1
             continue
 
         # Check for combinations with small ya, yu, yo
-        if i < len(japanese_text) - 1 and japanese_text[i+1] in ('ゃ', 'ゅ', 'ょ', 'ャ', 'ュ', 'ョ'):
-            combo = japanese_text[i:i+2]
-            if combo in kana_map:
-                result.append(kana_map[combo])
+        if i + 1 < text_len and japanese_text[i + 1] in small_y_set:
+            combo = char + japanese_text[i + 1]
+            combo_romaji = get_kana(combo)
+            if combo_romaji is not None:
+                result.append(combo_romaji)
                 i += 2
                 continue
 
-        # Regular character
-        if japanese_text[i] in kana_map:
-            result.append(kana_map[japanese_text[i]])
+        romaji = get_kana(char)
+        if romaji is not None:
+            result.append(romaji)
         else:
-            # If it's not in our map, keep it as is (might be kanji, romaji, etc.)
-            result.append(japanese_text[i])
+            result.append(char)
 
         i += 1
 
