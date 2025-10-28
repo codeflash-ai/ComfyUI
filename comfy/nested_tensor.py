@@ -1,8 +1,12 @@
 import torch
 
+
 class NestedTensor:
     def __init__(self, tensors):
-        self.tensors = list(tensors)
+        if isinstance(tensors, list):
+            self.tensors = tensors
+        else:
+            self.tensors = list(tensors)
         self.is_nested = True
 
     def _copy(self):
