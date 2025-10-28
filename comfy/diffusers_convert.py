@@ -67,27 +67,60 @@ def reshape_weight_for_sd(w, conv3d=False):
 
 
 def convert_vae_state_dict(vae_state_dict):
-    mapping = {k: k for k in vae_state_dict.keys()}
+    # Precompute lists and sets for faster membership tests and iteration
+    keys = tuple(vae_state_dict.keys())
+    mapping = dict.fromkeys(keys)  # Preallocate mapping for speed
     conv3d = False
-    for k, v in mapping.items():
-        for sd_part, hf_part in vae_conversion_map:
-            v = v.replace(hf_part, sd_part)
-        if v.endswith(".conv.weight"):
-            if not conv3d and vae_state_dict[k].ndim == 5:
-                conv3d = True
-        mapping[k] = v
-    for k, v in mapping.items():
-        if "attentions" in k:
-            for sd_part, hf_part in vae_conversion_map_attn:
+
+    # Inline the conversion maps for local lookups (avoid global attribute lookup in tight loops)
+    vae_map = vae_conversion_map
+    vae_map_attn = vae_conversion_map_attn
+
+    # Precompute which keys contain ".conv.weight" and their corresponding conv3d test
+    for k in keys:
+        v = k
+        for sd_part, hf_part in vae_map:
+            if hf_part in v:
                 v = v.replace(hf_part, sd_part)
-            mapping[k] = v
-    new_state_dict = {v: vae_state_dict[k] for k, v in mapping.items()}
-    weights_to_convert = ["q", "k", "v", "proj_out"]
-    for k, v in new_state_dict.items():
-        for weight_name in weights_to_convert:
-            if f"mid.attn_1.{weight_name}.weight" in k:
-                logging.debug(f"Reshaping {k} for SD format")
-                new_state_dict[k] = reshape_weight_for_sd(v, conv3d=conv3d)
+        if not conv3d and v.endswith(".conv.weight"):
+            param = vae_state_dict[k]
+            # Only test the condition if conv3d is not set
+            if hasattr(param, "ndim") and param.ndim == 5:
+                conv3d = True  # Only ever set once
+        mapping[k] = v
+
+    # Optimize attention block key-translation without repeated string search on each sd_part/hf_part
+    attention_keys = [k for k in keys if "attentions" in k]
+
+    for k in attention_keys:
+        v = mapping[k]
+        for sd_part, hf_part in vae_map_attn:
+            if hf_part in v:
+                v = v.replace(hf_part, sd_part)
+        mapping[k] = v
+
+    # Avoid double pass: make new_state_dict and do weight conversion scan in one loop
+    weights_to_convert = ("q", "k", "v", "proj_out")
+    mid_prefix = "mid.attn_1."
+    mid_suffix = ".weight"
+    new_state_dict = {}
+
+    for k in keys:
+        v_key = mapping[k]
+        v_value = vae_state_dict[k]
+        need_reshape = False
+        # Fast heuristic: restrict match to relevant patterns for speed
+        if v_key.startswith(mid_prefix) and v_key.endswith(mid_suffix):
+            # Only run the substring match if prefix/suffix fits
+            for weight_name in weights_to_convert:
+                if f"{mid_prefix}{weight_name}{mid_suffix}" == v_key:
+                    need_reshape = True
+                    break
+        if need_reshape:
+            logging.debug(f"Reshaping {v_key} for SD format")
+            v_value = reshape_weight_for_sd(v_value, conv3d=conv3d)
+        new_state_dict[v_key] = v_value
+
     return new_state_dict
 
 
@@ -105,8 +138,14 @@ textenc_conversion_lst = [
     (".c_proj.", ".fc2."),
     (".attn", ".self_attn"),
     ("ln_final.", "transformer.text_model.final_layer_norm."),
-    ("token_embedding.weight", "transformer.text_model.embeddings.token_embedding.weight"),
-    ("positional_embedding", "transformer.text_model.embeddings.position_embedding.weight"),
+    (
+        "token_embedding.weight",
+        "transformer.text_model.embeddings.token_embedding.weight",
+    ),
+    (
+        "positional_embedding",
+        "transformer.text_model.embeddings.position_embedding.weight",
+    ),
 ]
 protected = {re.escape(x[1]): x[0] for x in textenc_conversion_lst}
 textenc_pattern = re.compile("|".join(protected.keys()))
@@ -126,7 +165,7 @@ def cat_tensors(tensors):
 
     x = 0
     for t in tensors:
-        out[x:x + t.shape[0]] = t
+        out[x : x + t.shape[0]] = t
         x += t.shape[0]
 
     return out
@@ -140,9 +179,9 @@ def convert_text_enc_state_dict_v20(text_enc_dict, prefix=""):
         if not k.startswith(prefix):
             continue
         if (
-                k.endswith(".self_attn.q_proj.weight")
-                or k.endswith(".self_attn.k_proj.weight")
-                or k.endswith(".self_attn.v_proj.weight")
+            k.endswith(".self_attn.q_proj.weight")
+            or k.endswith(".self_attn.k_proj.weight")
+            or k.endswith(".self_attn.v_proj.weight")
         ):
             k_pre = k[: -len(".q_proj.weight")]
             k_code = k[-len("q_proj.weight")]
@@ -152,9 +191,9 @@ def convert_text_enc_state_dict_v20(text_enc_dict, prefix=""):
             continue
 
         if (
-                k.endswith(".self_attn.q_proj.bias")
-                or k.endswith(".self_attn.k_proj.bias")
-                or k.endswith(".self_attn.v_proj.bias")
+            k.endswith(".self_attn.q_proj.bias")
+            or k.endswith(".self_attn.k_proj.bias")
+            or k.endswith(".self_attn.v_proj.bias")
         ):
             k_pre = k[: -len(".q_proj.bias")]
             k_code = k[-len("q_proj.bias")]
@@ -165,21 +204,33 @@ def convert_text_enc_state_dict_v20(text_enc_dict, prefix=""):
 
         text_proj = "transformer.text_projection.weight"
         if k.endswith(text_proj):
-            new_state_dict[k.replace(text_proj, "text_projection")] = v.transpose(0, 1).contiguous()
+            new_state_dict[k.replace(text_proj, "text_projection")] = v.transpose(
+                0, 1
+            ).contiguous()
         else:
-            relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k)
+            relabelled_key = textenc_pattern.sub(
+                lambda m: protected[re.escape(m.group(0))], k
+            )
             new_state_dict[relabelled_key] = v
 
     for k_pre, tensors in capture_qkv_weight.items():
         if None in tensors:
-            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
-        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
+            raise Exception(
+                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
+            )
+        relabelled_key = textenc_pattern.sub(
+            lambda m: protected[re.escape(m.group(0))], k_pre
+        )
         new_state_dict[relabelled_key + ".in_proj_weight"] = cat_tensors(tensors)
 
     for k_pre, tensors in capture_qkv_bias.items():
         if None in tensors:
-            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
-        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
+            raise Exception(
+                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
+            )
+        relabelled_key = textenc_pattern.sub(
+            lambda m: protected[re.escape(m.group(0))], k_pre
+        )
         new_state_dict[relabelled_key + ".in_proj_bias"] = cat_tensors(tensors)
 
     return new_state_dict
