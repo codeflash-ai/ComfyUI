@@ -30,33 +30,46 @@ class DiagonalGaussianDistribution(object):
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
         if self.deterministic:
-            self.var = self.std = torch.zeros_like(self.mean, device=self.parameters.device)
+            self.var = self.std = torch.zeros_like(
+                self.mean, device=self.parameters.device
+            )
 
     def sample(self):
-        x = self.mean + self.std * torch.randn(self.mean.shape, device=self.parameters.device)
+        x = self.mean + self.std * torch.randn(
+            self.mean.shape, device=self.parameters.device
+        )
         return x
 
     def kl(self, other=None):
         if self.deterministic:
-            return torch.Tensor([0.])
+            return torch.Tensor([0.0])
+        # Fast path for none 'other': avoid pow()
+        if other is None:
+            mean2 = self.mean * self.mean  # faster than pow(self.mean, 2)
+            # Compute the final result in a single call to torch.sum by precomputing the tensor
+            # This avoids intermediate tensors and repeated sums
+            kl_tensor = mean2 + self.var - 1.0 - self.logvar
+            return 0.5 * torch.sum(kl_tensor, dim=[1, 2, 3])
         else:
-            if other is None:
-                return 0.5 * torch.sum(torch.pow(self.mean, 2)
-                                       + self.var - 1.0 - self.logvar,
-                                       dim=[1, 2, 3])
-            else:
-                return 0.5 * torch.sum(
-                    torch.pow(self.mean - other.mean, 2) / other.var
-                    + self.var / other.var - 1.0 - self.logvar + other.logvar,
-                    dim=[1, 2, 3])
+            # Precompute mean difference and its square
+            mean_diff = self.mean - other.mean
+            mean_diff2 = mean_diff * mean_diff  # faster than pow()
+            # Precompute self.var / other.var
+            var_ratio = self.var / other.var
+            # Aggregate in a single tensor for summation
+            kl_tensor = (
+                mean_diff2 / other.var + var_ratio - 1.0 - self.logvar + other.logvar
+            )
+            return 0.5 * torch.sum(kl_tensor, dim=[1, 2, 3])
 
-    def nll(self, sample, dims=[1,2,3]):
+    def nll(self, sample, dims=[1, 2, 3]):
         if self.deterministic:
-            return torch.Tensor([0.])
+            return torch.Tensor([0.0])
         logtwopi = np.log(2.0 * np.pi)
         return 0.5 * torch.sum(
             logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
-            dim=dims)
+            dim=dims,
+        )
 
     def mode(self):
         return self.mean
