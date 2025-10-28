@@ -103,12 +103,12 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     omega = 1. / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+    out = np.multiply.outer(pos, omega)  # (M, D/2), outer product
 
-    emb_sin = np.sin(out)   # (M, D/2)
-    emb_cos = np.cos(out)   # (M, D/2)
+    emb = np.empty((pos.shape[0], embed_dim), dtype=np.float64)
+    np.sin(out, out=emb[:, :embed_dim // 2])   # (M, D/2)
+    np.cos(out, out=emb[:, embed_dim // 2:])   # (M, D/2)
 
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
 
 
