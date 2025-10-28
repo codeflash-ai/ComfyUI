@@ -35,9 +35,26 @@ def normalize(x: torch.Tensor, dim: Optional[List[int]] = None, eps: float = 0) 
     """
     if dim is None:
         dim = list(range(1, x.ndim))
+    
+    # Precompute normalization scalar, avoiding float-to-int repeatedly in autograd
     norm = torch.linalg.vector_norm(x, dim=dim, keepdim=True, dtype=torch.float32)
-    norm = torch.add(eps, norm, alpha=math.sqrt(norm.numel() / x.numel()))
-    return x / norm.to(x.dtype)
+    # Save .numel() on tensor objects and math.sqrt call outside the add for efficiency
+    norm_count = norm.numel()
+    x_count = x.numel()
+    sqrt_ratio = math.sqrt(norm_count / x_count)
+    # Use .add_ or .add_ only if safe, avoid in-place ops because .to may require it elsewhere
+    
+    # Fused add and scaling
+    if eps == 0:
+        # No need to add eps, avoid extra addition if zero
+        norm = norm * sqrt_ratio
+    else:
+        norm = norm * sqrt_ratio + eps
+
+    # Avoid unnecessary .to if the dtypes already match
+    if norm.dtype != x.dtype:
+        norm = norm.to(dtype=x.dtype)
+    return x / norm
 
 
 class VideoPositionEmb(nn.Module):
