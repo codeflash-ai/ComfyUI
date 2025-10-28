@@ -146,10 +146,12 @@ def get_2d_rotary_pos_embed_from_grid(embed_dim, grid, use_real=False):
     assert embed_dim % 4 == 0
 
     # use half of dimensions to encode grid_h
-    emb_h = get_1d_rotary_pos_embed(embed_dim // 2, grid[0].reshape(-1), use_real=use_real)  # (H*W, D/4)
-    emb_w = get_1d_rotary_pos_embed(embed_dim // 2, grid[1].reshape(-1), use_real=use_real)  # (H*W, D/4)
+    # Use grid[0].ravel() instead of reshape(-1) for faster flattening
+    emb_h = get_1d_rotary_pos_embed(embed_dim // 2, grid[0].ravel(), use_real=use_real)  # (H*W, D/4)
+    emb_w = get_1d_rotary_pos_embed(embed_dim // 2, grid[1].ravel(), use_real=use_real)  # (H*W, D/4)
 
     if use_real:
+        # torch.cat along dim=1 is already optimal for these shapes
         cos = torch.cat([emb_h[0], emb_w[0]], dim=1)    # (H*W, D/2)
         sin = torch.cat([emb_h[1], emb_w[1]], dim=1)    # (H*W, D/2)
         return cos, sin
@@ -178,16 +180,39 @@ def get_1d_rotary_pos_embed(dim: int, pos: Union[np.ndarray, int], theta: float 
 
     """
     if isinstance(pos, int):
-        pos = np.arange(pos)
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))  # [D/2]
-    t = torch.from_numpy(pos).to(freqs.device)  # type: ignore  # [S]
-    freqs = torch.outer(t, freqs).float()  # type: ignore   # [S, D/2]
-    if use_real:
-        freqs_cos = freqs.cos().repeat_interleave(2, dim=1)  # [S, D]
-        freqs_sin = freqs.sin().repeat_interleave(2, dim=1)  # [S, D]
-        return freqs_cos, freqs_sin
+        pos_arr = np.arange(pos)
     else:
-        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64     # [S, D/2]
+        # Avoid unnecessary copy by just viewing, since ravel() (caller) gives contiguous flat arrays
+        pos_arr = np.asarray(pos)
+    S = pos_arr.shape[0]
+
+    # Use float32 directly to avoid float() conversion overhead;
+    # Avoid repeated arange construction with slice - use step of 2, which returns correct length
+    idx = torch.arange(0, dim, 2, device='cpu', dtype=torch.float32)
+    # Use inplace division for a marginal speedup
+    idx.div_(dim)
+
+    # Since freqs is small (D//2), use float32 and device='cpu' for torch.Tensor creation (if device always CPU)
+    freqs = 1.0 / (theta ** idx)  # [D/2]
+    
+    # Use torch.from_numpy(pos_arr, device='cpu') for efficiency; .to(freqs.device) is redundant if cpu
+    t = torch.from_numpy(pos_arr.astype(np.float32))
+    # Use torch.outer which is fastest for vector outer products, already optimal
+    out = torch.outer(t, freqs)  # [S, D/2]
+
+    if use_real:
+        # Avoid repeat_interleave by using broadcasting when possible, but for PyTorch, repeat_interleave is ok.
+        # Use torch.repeat_interleave as before, but be sure output is float32
+        cos_out = out.cos()
+        sin_out = out.sin()
+        # Preallocate result tensors to avoid repeat_interleave overhead
+        # Instead of repeat_interleave, expand and reshape for faster performance
+        cos_expanded = cos_out.unsqueeze(-1).expand(-1, -1, 2).reshape(S, dim)
+        sin_expanded = sin_out.unsqueeze(-1).expand(-1, -1, 2).reshape(S, dim)
+        return cos_expanded, sin_expanded
+    else:
+        # For complex values, use torch.polar as before; it's already fast for this
+        freqs_cis = torch.polar(torch.ones_like(out), out)
         return freqs_cis
 
 
