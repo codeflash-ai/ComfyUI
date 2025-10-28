@@ -83,10 +83,13 @@ def normal_kl(mean1, logvar1, mean2, logvar2):
         for x in (logvar1, logvar2)
     ]
 
+    delta = mean1 - mean2
+    exp_logvar1_minus_logvar2 = torch.exp(logvar1 - logvar2)
+    exp_neg_logvar2 = torch.exp(-logvar2)
     return 0.5 * (
         -1.0
         + logvar2
         - logvar1
-        + torch.exp(logvar1 - logvar2)
-        + ((mean1 - mean2) ** 2) * torch.exp(-logvar2)
+        + exp_logvar1_minus_logvar2
+        + delta * delta * exp_neg_logvar2
     )
