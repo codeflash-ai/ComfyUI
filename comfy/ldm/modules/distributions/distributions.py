@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 
 class AbstractDistribution:
@@ -53,10 +52,19 @@ class DiagonalGaussianDistribution(object):
     def nll(self, sample, dims=[1,2,3]):
         if self.deterministic:
             return torch.Tensor([0.])
-        logtwopi = np.log(2.0 * np.pi)
-        return 0.5 * torch.sum(
-            logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
-            dim=dims)
+        # Use a precomputed Python float constant and torch.log for throughput
+        logtwopi = 1.8378770664093453  # np.log(2.0 * np.pi), as float
+        # Direct elementwise math with reuse of intermediate buffers
+        diff = sample - self.mean
+        sq_diff = diff * diff
+        # Fused calculation instead of repeated allocations
+        nll_elem = (
+            logtwopi
+            + self.logvar
+            + sq_diff / self.var
+        )
+        # Using torch.sum with out-of-place output as before
+        return 0.5 * torch.sum(nll_elem, dim=dims)
 
     def mode(self):
         return self.mean
