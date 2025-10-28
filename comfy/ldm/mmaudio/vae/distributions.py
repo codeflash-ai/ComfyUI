@@ -41,12 +41,13 @@ class DiagonalGaussianDistribution(object):
             return torch.Tensor([0.])
         else:
             if other is None:
-                return 0.5 * torch.sum(torch.pow(self.mean, 2)
+                return 0.5 * torch.sum(self.mean * self.mean
                                        + self.var - 1.0 - self.logvar,
                                        dim=[1, 2, 3])
             else:
+                diff = self.mean - other.mean
                 return 0.5 * torch.sum(
-                    torch.pow(self.mean - other.mean, 2) / other.var
+                    diff * diff / other.var
                     + self.var / other.var - 1.0 - self.logvar + other.logvar,
                     dim=[1, 2, 3])
 
