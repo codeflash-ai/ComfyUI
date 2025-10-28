@@ -11,8 +11,15 @@ def _to_tuple(x):
 
 
 def get_fill_resize_and_crop(src, tgt):
-    th, tw = _to_tuple(tgt)
-    h, w = _to_tuple(src)
+    if type(tgt) is int:
+        th = tw = tgt
+    else:
+        th, tw = tgt
+
+    if type(src) is int:
+        h = w = src
+    else:
+        h, w = src
 
     tr = th / tw        # base resolution
     r = h / w           # target resolution
