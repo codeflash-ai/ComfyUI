@@ -87,7 +87,9 @@ def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
     emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
 
-    emb = np.concatenate([emb_h, emb_w], axis=1)    # (H*W, D)
+    emb = np.empty((emb_h.shape[0], emb_h.shape[1] + emb_w.shape[1]), dtype=emb_h.dtype)
+    emb[:, :emb_h.shape[1]] = emb_h
+    emb[:, emb_h.shape[1]:] = emb_w
     return emb
 
 
@@ -98,17 +100,22 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     out: (M, D)
     """
     assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=np.float64)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000**omega  # (D/2,)
+    half_dim = embed_dim // 2
+
+    # Compute omega only once and re-use as float64; broadcasting is leveraged for speed
+    omega = np.arange(half_dim, dtype=np.float64)
+    omega = 1.0 / (10000 ** (omega / half_dim))
 
     pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
 
-    emb_sin = np.sin(out)   # (M, D/2)
-    emb_cos = np.cos(out)   # (M, D/2)
+    # Outer-product via np.multiply.outer (significantly faster than einsum for this use-case)
+    out = np.multiply.outer(pos, omega)  # (M, D/2)
 
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    # Preallocate output array and assign directly to save time over horizontal np.concatenate
+    emb = np.empty((out.shape[0], embed_dim), dtype=np.float64)
+    np.sin(out, out=emb[:, :half_dim])
+    np.cos(out, out=emb[:, half_dim:])
+
     return emb
 
 
