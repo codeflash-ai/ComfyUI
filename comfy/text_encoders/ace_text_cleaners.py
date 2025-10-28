@@ -4,6 +4,14 @@
 
 import re
 
+_ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+         "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+         "seventeen", "eighteen", "nineteen"]
+
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+_DIGITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+
 def japanese_to_romaji(japanese_text):
     """
     Convert Japanese hiragana and katakana to romaji (Latin alphabet representation).
@@ -160,8 +168,12 @@ def number_to_text(num, ordinal=False):
         int_text = _int_to_text(int_part)
 
         # Handle decimal part (convert to string and remove '0.')
-        decimal_str = str(num).split('.')[1]
-        decimal_text = " point " + " ".join(_digit_to_text(int(digit)) for digit in decimal_str)
+        # Use .as_integer_ratio for exact decimals, but keep backward compatibility
+        decimal_str = str(num).split('.', 1)[1]
+
+        # Avoid using generator expression; precompute list for " ".join
+        decimal_text_list = [_DIGITS[int(digit)] for digit in decimal_str]
+        decimal_text = " point " + " ".join(decimal_text_list)
 
         result = int_text + decimal_text
     else:
@@ -178,28 +190,31 @@ def number_to_text(num, ordinal=False):
 def _int_to_text(num):
     """Helper function to convert an integer to text"""
 
-    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-            "seventeen", "eighteen", "nineteen"]
-
-    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    # Use local binding to globals for minimal lookup overhead
+    ones = _ONES
+    tens = _TENS
 
     if num < 20:
         return ones[num]
 
     if num < 100:
-        return tens[num // 10] + (" " + ones[num % 10] if num % 10 != 0 else "")
+        rem = num % 10
+        return tens[num // 10] + (" " + ones[rem] if rem != 0 else "")
 
     if num < 1000:
-        return ones[num // 100] + " hundred" + (" " + _int_to_text(num % 100) if num % 100 != 0 else "")
+        rem = num % 100
+        return ones[num // 100] + " hundred" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000:
-        return _int_to_text(num // 1000) + " thousand" + (" " + _int_to_text(num % 1000) if num % 1000 != 0 else "")
+        rem = num % 1000
+        return _int_to_text(num // 1000) + " thousand" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000000:
-        return _int_to_text(num // 1000000) + " million" + (" " + _int_to_text(num % 1000000) if num % 1000000 != 0 else "")
+        rem = num % 1000000
+        return _int_to_text(num // 1000000) + " million" + (" " + _int_to_text(rem) if rem != 0 else "")
 
-    return _int_to_text(num // 1000000000) + " billion" + (" " + _int_to_text(num % 1000000000) if num % 1000000000 != 0 else "")
+    rem = num % 1000000000
+    return _int_to_text(num // 1000000000) + " billion" + (" " + _int_to_text(rem) if rem != 0 else "")
 
 
 def _digit_to_text(digit):
