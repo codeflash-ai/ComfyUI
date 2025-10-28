@@ -1,5 +1,6 @@
 import torch
 
+
 class NestedTensor:
     def __init__(self, tensors):
         self.tensors = list(tensors)
@@ -10,12 +11,15 @@ class NestedTensor:
 
     def apply_operation(self, other, operation):
         o = self._copy()
+        tensors = o.tensors
         if isinstance(other, NestedTensor):
-            for i, t in enumerate(o.tensors):
-                o.tensors[i] = operation(t, other.tensors[i])
+            other_tensors = other.tensors
+            # Use range and localize variables to avoid attribute lookups in loop.
+            for i in range(len(tensors)):
+                tensors[i] = operation(tensors[i], other_tensors[i])
         else:
-            for i, t in enumerate(o.tensors):
-                o.tensors[i] = operation(t, other)
+            for i in range(len(tensors)):
+                tensors[i] = operation(tensors[i], other)
         return o
 
     def __add__(self, b):
