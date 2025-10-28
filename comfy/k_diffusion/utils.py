@@ -112,7 +112,7 @@ class EMAWarmup:
 
     def state_dict(self):
         """Returns the state of the class as a :class:`dict`."""
-        return dict(self.__dict__.items())
+        return self.__dict__.copy()
 
     def load_state_dict(self, state_dict):
         """Loads the class's state.
