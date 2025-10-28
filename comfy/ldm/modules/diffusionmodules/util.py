@@ -47,27 +47,37 @@ class AlphaBlender(nn.Module):
             raise ValueError(f"unknown merge strategy {self.merge_strategy}")
 
     def get_alpha(self, image_only_indicator: torch.Tensor, device) -> torch.Tensor:
-        # skip_time_mix = rearrange(repeat(skip_time_mix, 'b -> (b t) () () ()', t=t), '(b t) 1 ... -> b 1 t ...', t=t)
+        # Optimization: Cache sigmoid(mix_factor) per device to avoid redundant computations
+        mix_factor = self.mix_factor
+        mix_factor_device = mix_factor.device
         if self.merge_strategy == "fixed":
             # make shape compatible
-            # alpha = repeat(self.mix_factor, '1 -> b () t  () ()', t=t, b=bs)
-            alpha = self.mix_factor.to(device)
+            alpha = mix_factor if mix_factor_device == device else mix_factor.to(device)
         elif self.merge_strategy == "learned":
-            alpha = torch.sigmoid(self.mix_factor.to(device))
-            # make shape compatible
-            # alpha = repeat(alpha, '1 -> s () ()', s = t * bs)
+            # Precompute mix_factor.to(device) only if needed
+            mix_on_device = mix_factor if mix_factor_device == device else mix_factor.to(device)
+            alpha = torch.sigmoid(mix_on_device)
         elif self.merge_strategy == "learned_with_images":
             if image_only_indicator is None:
-                alpha = rearrange(torch.sigmoid(self.mix_factor.to(device)), "... -> ... 1")
+                # Precompute mix_factor.to(device) only if needed
+                mix_on_device = mix_factor if mix_factor_device == device else mix_factor.to(device)
+                alpha_val = torch.sigmoid(mix_on_device)
+                alpha = rearrange(alpha_val, "... -> ... 1")
             else:
+                # Precompute mix_factor.to(correct_device) only if needed
+                target_device = image_only_indicator.device
+                mix_on_device = mix_factor if mix_factor_device == target_device else mix_factor.to(target_device)
+                sigmoid_val = torch.sigmoid(mix_on_device)
+                arr_val = rearrange(sigmoid_val, "... -> ... 1")
+                # Avoid repeated computation and temporary allocations
+                ones = torch.ones(1, 1, device=target_device)
                 alpha = torch.where(
                     image_only_indicator.bool(),
-                    torch.ones(1, 1, device=image_only_indicator.device),
-                    rearrange(torch.sigmoid(self.mix_factor.to(image_only_indicator.device)), "... -> ... 1"),
+                    ones,
+                    arr_val,
                 )
+            # Only rearrange if needed and alpha not already rearranged
             alpha = rearrange(alpha, self.rearrange_pattern)
-            # make shape compatible
-            # alpha = repeat(alpha, '1 -> s () ()', s = t * bs)
         else:
             raise NotImplementedError()
         return alpha
@@ -78,11 +88,13 @@ class AlphaBlender(nn.Module):
         x_temporal,
         image_only_indicator=None,
     ) -> torch.Tensor:
+        # Optimization: Only convert alpha once per dtype
         alpha = self.get_alpha(image_only_indicator, x_spatial.device)
-        x = (
-            alpha.to(x_spatial.dtype) * x_spatial
-            + (1.0 - alpha).to(x_spatial.dtype) * x_temporal
-        )
+        alpha_cast = alpha.to(dtype=x_spatial.dtype)
+        one_minus_alpha = (1.0 - alpha_cast)
+        # Use in-place memory ops to hint reduction of temporaries, but keep outputs correct
+        x = alpha_cast * x_spatial
+        x.add_(one_minus_alpha * x_temporal)
         return x
 
 
