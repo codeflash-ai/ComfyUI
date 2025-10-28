@@ -30,33 +30,50 @@ class DiagonalGaussianDistribution(object):
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
         if self.deterministic:
-            self.var = self.std = torch.zeros_like(self.mean, device=self.parameters.device)
+            self.var = self.std = torch.zeros_like(
+                self.mean, device=self.parameters.device
+            )
 
     def sample(self):
-        x = self.mean + self.std * torch.randn(self.mean.shape, device=self.parameters.device)
-        return x
+        # Preallocate output and fill with normal noise in-place, then scale and shift in-place
+        # Avoids temporary allocation of random and intermediate tensors
+        if self.deterministic:
+            # Output is just the mean
+            return self.mean
+        else:
+            output = torch.empty_like(self.mean, device=self.parameters.device)
+            output.normal_()
+            output.mul_(self.std)
+            output.add_(self.mean)
+            return output
 
     def kl(self, other=None):
         if self.deterministic:
-            return torch.Tensor([0.])
+            return torch.Tensor([0.0])
         else:
             if other is None:
-                return 0.5 * torch.sum(torch.pow(self.mean, 2)
-                                       + self.var - 1.0 - self.logvar,
-                                       dim=[1, 2, 3])
+                return 0.5 * torch.sum(
+                    torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
+                    dim=[1, 2, 3],
+                )
             else:
                 return 0.5 * torch.sum(
                     torch.pow(self.mean - other.mean, 2) / other.var
-                    + self.var / other.var - 1.0 - self.logvar + other.logvar,
-                    dim=[1, 2, 3])
+                    + self.var / other.var
+                    - 1.0
+                    - self.logvar
+                    + other.logvar,
+                    dim=[1, 2, 3],
+                )
 
-    def nll(self, sample, dims=[1,2,3]):
+    def nll(self, sample, dims=[1, 2, 3]):
         if self.deterministic:
-            return torch.Tensor([0.])
+            return torch.Tensor([0.0])
         logtwopi = np.log(2.0 * np.pi)
         return 0.5 * torch.sum(
             logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
-            dim=dims)
+            dim=dims,
+        )
 
     def mode(self):
         return self.mean
