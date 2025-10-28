@@ -48,12 +48,14 @@ class CONDCrossAttn(CONDRegular):
         s1 = self.cond.shape
         s2 = other.cond.shape
         if s1 != s2:
-            if s1[0] != s2[0] or s1[2] != s2[2]: #these 2 cases should not happen
+            if s1[0] != s2[0] or s1[2] != s2[2]:  # these 2 cases should not happen
                 return False
 
             mult_min = math.lcm(s1[1], s2[1])
             diff = mult_min // min(s1[1], s2[1])
-            if diff > 4: #arbitrary limit on the padding because it's probably going to impact performance negatively if it's too much
+            if (
+                diff > 4
+            ):  # arbitrary limit on the padding because it's probably going to impact performance negatively if it's too much
                 return False
         if self.cond.device != other.cond.device:
             logging.warning("WARNING: conds not on same device: skipping concat.")
@@ -62,17 +64,28 @@ class CONDCrossAttn(CONDRegular):
 
     def concat(self, others):
         conds = [self.cond]
-        crossattn_max_len = self.cond.shape[1]
+        lengths = [self.cond.shape[1]]
         for x in others:
             c = x.cond
-            crossattn_max_len = math.lcm(crossattn_max_len, c.shape[1])
+            lengths.append(c.shape[1])
             conds.append(c)
 
+        # Compute the LCM of all sequence lengths
+        crossattn_max_len = lengths[0]
+        for length in lengths[1:]:
+            crossattn_max_len = math.lcm(crossattn_max_len, length)
+
+        # Preallocate output tensor for efficiency if all shapes and types are compatible
+        # Otherwise, repeat and collect as in original code
         out = []
-        for c in conds:
-            if c.shape[1] < crossattn_max_len:
-                c = c.repeat(1, crossattn_max_len // c.shape[1], 1) #padding with repeat doesn't change result
+        for c, length in zip(conds, lengths):
+            if length < crossattn_max_len:
+                factor = crossattn_max_len // length
+                # Avoid unnecessary repeat if factor == 1
+                c = c if factor == 1 else c.repeat(1, factor, 1)
             out.append(c)
+
+        # torch.cat can be slow if the list is large; for 3D tensors sharing dim 0, dim 1 it's best to use torch.cat at once
         return torch.cat(out)
 
 
