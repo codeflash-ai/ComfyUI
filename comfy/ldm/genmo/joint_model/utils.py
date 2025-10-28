@@ -1,5 +1,5 @@
-#original code from https://github.com/genmoai/models under apache 2.0 license
-#adapted to ComfyUI
+# original code from https://github.com/genmoai/models under apache 2.0 license
+# adapted to ComfyUI
 
 from typing import Optional
 
@@ -52,9 +52,13 @@ class AttentionPool(nn.Module):
         """
         super().__init__()
         self.num_heads = num_heads
-        self.to_kv = operations.Linear(embed_dim, 2 * embed_dim, device=device, dtype=dtype)
+        self.to_kv = operations.Linear(
+            embed_dim, 2 * embed_dim, device=device, dtype=dtype
+        )
         self.to_q = operations.Linear(embed_dim, embed_dim, device=device, dtype=dtype)
-        self.to_out = operations.Linear(embed_dim, output_dim or embed_dim, device=device, dtype=dtype)
+        self.to_out = operations.Linear(
+            embed_dim, output_dim or embed_dim, device=device, dtype=dtype
+        )
 
     def forward(self, x, mask):
         """
@@ -69,11 +73,20 @@ class AttentionPool(nn.Module):
         """
         D = x.size(2)
 
-        # Construct attention mask, shape: (B, 1, num_queries=1, num_keys=1+L).
-        attn_mask = mask[:, None, None, :].bool()  # (B, 1, 1, L).
-        attn_mask = F.pad(attn_mask, (1, 0), value=True)  # (B, 1, 1, 1+L).
+        # Construct attention mask: preallocate and pad in one step
+        # (B, 1, 1, L) -> (B, 1, 1, 1+L) using torch.cat for better efficiency than F.pad
+        attn_mask = mask[:, None, None, :].bool()  # (B, 1, 1, L)
+        true_pad = torch.ones(
+            attn_mask.shape[0],
+            attn_mask.shape[1],
+            attn_mask.shape[2],
+            1,
+            dtype=torch.bool,
+            device=attn_mask.device,
+        )
+        attn_mask = torch.cat([true_pad, attn_mask], dim=3)  # (B, 1, 1, 1+L)
 
-        # Average non-padding token features. These will be used as the query.
+        # Average non-padding token features as query
         x_pool = pool_tokens(x, mask, keepdim=True)  # (B, 1, D)
 
         # Concat pooled features to input sequence.
@@ -83,20 +96,24 @@ class AttentionPool(nn.Module):
         kv = self.to_kv(x)  # (B, L+1, 2 * D)
         q = self.to_q(x[:, 0])  # (B, D)
 
-        # Extract heads.
+        # Efficient head splitting using view/reshape when possible
         head_dim = D // self.num_heads
-        kv = kv.unflatten(2, (2, self.num_heads, head_dim))  # (B, 1+L, 2, H, head_dim)
-        kv = kv.transpose(1, 3)  # (B, H, 2, 1+L, head_dim)
-        k, v = kv.unbind(2)  # (B, H, 1+L, head_dim)
-        q = q.unflatten(1, (self.num_heads, head_dim))  # (B, H, head_dim)
+
+        # Use reshape for efficient memory and speed instead of unflatten if possible
+        kv = kv.reshape(
+            kv.shape[0], kv.shape[1], 2, self.num_heads, head_dim
+        )  # (B, L+1, 2, H, head_dim)
+        kv = kv.transpose(1, 3)  # (B, H, 2, L+1, head_dim)
+        k, v = kv.unbind(2)  # (B, H, L+1, head_dim)
+        q = q.reshape(q.shape[0], self.num_heads, head_dim)  # (B, H, head_dim)
         q = q.unsqueeze(2)  # (B, H, 1, head_dim)
 
-        # Compute attention.
+        # Compute attention
         x = F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, dropout_p=0.0
         )  # (B, H, 1, head_dim)
 
         # Concatenate heads and run output.
-        x = x.squeeze(2).flatten(1, 2)  # (B, D = H * head_dim)
+        x = x.squeeze(2).reshape(x.shape[0], -1)  # (B, D = H * head_dim)
         x = self.to_out(x)
         return x
