@@ -676,10 +676,18 @@ def flux_to_diffusers(mmdit_config, output_prefix=""):
     return key_map
 
 def repeat_to_batch_size(tensor, batch_size, dim=0):
-    if tensor.shape[dim] > batch_size:
+    shape = tensor.shape
+    dim_size = shape[dim]
+    if dim_size > batch_size:
         return tensor.narrow(dim, 0, batch_size)
-    elif tensor.shape[dim] < batch_size:
-        return tensor.repeat(dim * [1] + [math.ceil(batch_size / tensor.shape[dim])] + [1] * (len(tensor.shape) - 1 - dim)).narrow(dim, 0, batch_size)
+    elif dim_size < batch_size:
+        # Calculate repeat multiplier only once
+        repeat_multiplier = math.ceil(batch_size / dim_size)
+        # Precompute repeat argument for efficiency
+        rank = len(shape)
+        repeat_arg = [1] * rank
+        repeat_arg[dim] = repeat_multiplier
+        return tensor.repeat(*repeat_arg).narrow(dim, 0, batch_size)
     return tensor
 
 def resize_to_batch_size(tensor, batch_size):
