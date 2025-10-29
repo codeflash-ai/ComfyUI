@@ -36,16 +36,11 @@ def t2alpha_fn(beta_0, beta_1, t):
 #----------------------------------------------------------------------------
 
 def cal_intergrand(beta_0, beta_1, taus):
-    with torch.inference_mode(mode=False):
-        taus = taus.clone()
-        beta_0 = beta_0.clone()
-        beta_1 = beta_1.clone()
-        with torch.enable_grad():
-            taus.requires_grad_(True)
-            alpha = t2alpha_fn(beta_0, beta_1, taus)
-            log_alpha = alpha.log()
-            log_alpha.sum().backward()
-            d_log_alpha_dtau = taus.grad
+    taus = taus.clone().requires_grad_(True)
+    alpha = t2alpha_fn(beta_0, beta_1, taus)
+    log_alpha = alpha.log()
+    log_alpha.sum().backward()
+    d_log_alpha_dtau = taus.grad
     integrand = -0.5 * d_log_alpha_dtau / torch.sqrt(alpha * (1 - alpha))
     return integrand
 
