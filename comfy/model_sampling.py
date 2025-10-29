@@ -229,8 +229,15 @@ class ModelSamplingContinuousEDM(torch.nn.Module):
             return 0.0
         percent = 1.0 - percent
 
-        log_sigma_min = math.log(self.sigma_min)
-        return math.exp((math.log(self.sigma_max) - log_sigma_min) * percent + log_sigma_min)
+        # Cache log(sigma_min) and log(sigma_max) at initialization for efficiency
+        log_sigma_min = getattr(self, '_log_sigma_min', None)
+        log_sigma_max = getattr(self, '_log_sigma_max', None)
+        if log_sigma_min is None or log_sigma_max is None:
+            log_sigma_min = math.log(self.sigma_min)
+            log_sigma_max = math.log(self.sigma_max)
+            self._log_sigma_min = log_sigma_min
+            self._log_sigma_max = log_sigma_max
+        return math.exp((log_sigma_max - log_sigma_min) * percent + log_sigma_min)
 
 
 class ModelSamplingContinuousV(ModelSamplingContinuousEDM):
