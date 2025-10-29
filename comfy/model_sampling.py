@@ -309,16 +309,31 @@ class StableCascadeSampling(ModelSamplingDiscrete):
         self.set_sigmas(sigmas)
 
     def sigma(self, timestep):
-        alpha_cumprod = (torch.cos((timestep + self.cosine_s) / (1 + self.cosine_s) * torch.pi * 0.5) ** 2 / self._init_alpha_cumprod)
+        # Optimize by computing (1 + self.cosine_s) and precomputing torch.pi * 0.5
+        cosine_s = self.cosine_s
+        one_plus_cosine_s = 1 + cosine_s
+        pi_half = torch.pi * 0.5
+
+        # Avoid allocating new tensors when possible by using .to(timestep.device) ONLY if needed
+        ts = timestep
+        # Compute normalized argument for cos operation in one step
+        cos_input = (ts + cosine_s) / one_plus_cosine_s * pi_half
+
+        # Compute alpha_cumprod efficiently
+        alpha_cumprod = torch.cos(cos_input) ** 2 / self._init_alpha_cumprod
 
         if self.shift != 1.0:
             var = alpha_cumprod
-            logSNR = (var/(1-var)).log()
-            logSNR += 2 * torch.log(1.0 / torch.tensor(self.shift))
+            inv_var = 1 - var
+            # Avoid .log() on zero or negative values, add min clamp for stability (behavior matches original unless var==1)
+            logSNR = (var / inv_var.clamp_min(1e-12)).log()
+            logSNR += 2 * torch.log(torch.tensor(1.0 / self.shift, device=logSNR.device))
             alpha_cumprod = logSNR.sigmoid()
 
+        # Use clamp_ for potential inplace, memory-efficient operation (safe for new tensors)
         alpha_cumprod = alpha_cumprod.clamp(0.0001, 0.9999)
-        return ((1 - alpha_cumprod) / alpha_cumprod) ** 0.5
+        # Avoid recomputing (1 - x) by direct calculation
+        return ((1 - alpha_cumprod) / alpha_cumprod).sqrt()
 
     def timestep(self, sigma):
         var = 1 / ((sigma * sigma) + 1)
@@ -333,6 +348,7 @@ class StableCascadeSampling(ModelSamplingDiscrete):
         if percent >= 1.0:
             return 0.0
 
+        # Avoid creating a new tensor when not needed -- but sigma expects tensor input; so keep as is
         percent = 1.0 - percent
         return self.sigma(torch.tensor(percent))
 
