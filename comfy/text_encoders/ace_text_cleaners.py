@@ -4,6 +4,12 @@
 
 import re
 
+ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen"]
+
+tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
 def japanese_to_romaji(japanese_text):
     """
     Convert Japanese hiragana and katakana to romaji (Latin alphabet representation).
@@ -178,28 +184,27 @@ def number_to_text(num, ordinal=False):
 def _int_to_text(num):
     """Helper function to convert an integer to text"""
 
-    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-            "seventeen", "eighteen", "nineteen"]
-
-    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
-
     if num < 20:
         return ones[num]
 
     if num < 100:
-        return tens[num // 10] + (" " + ones[num % 10] if num % 10 != 0 else "")
+        ten, one = divmod(num, 10)
+        return tens[ten] + (" " + ones[one] if one != 0 else "")
 
     if num < 1000:
-        return ones[num // 100] + " hundred" + (" " + _int_to_text(num % 100) if num % 100 != 0 else "")
+        hundred, rem = divmod(num, 100)
+        return ones[hundred] + " hundred" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000:
-        return _int_to_text(num // 1000) + " thousand" + (" " + _int_to_text(num % 1000) if num % 1000 != 0 else "")
+        thousand, rem = divmod(num, 1000)
+        return _int_to_text(thousand) + " thousand" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000000:
-        return _int_to_text(num // 1000000) + " million" + (" " + _int_to_text(num % 1000000) if num % 1000000 != 0 else "")
+        million, rem = divmod(num, 1000000)
+        return _int_to_text(million) + " million" + (" " + _int_to_text(rem) if rem != 0 else "")
 
-    return _int_to_text(num // 1000000000) + " billion" + (" " + _int_to_text(num % 1000000000) if num % 1000000000 != 0 else "")
+    billion, rem = divmod(num, 1000000000)
+    return _int_to_text(billion) + " billion" + (" " + _int_to_text(rem) if rem != 0 else "")
 
 
 def _digit_to_text(digit):
@@ -341,19 +346,19 @@ def _expand_number(m, lang="en"):
 
 def expand_numbers_multilingual(text, lang="en"):
     if lang in ["en", "ru"]:
-        text = re.sub(_comma_number_re, _remove_commas, text)
+        text = _comma_number_re.sub(_remove_commas, text)
     else:
-        text = re.sub(_dot_number_re, _remove_dots, text)
+        text = _dot_number_re.sub(_remove_dots, text)
     try:
-        text = re.sub(_currency_re["GBP"], lambda m: _expand_currency(m, lang, "GBP"), text)
-        text = re.sub(_currency_re["USD"], lambda m: _expand_currency(m, lang, "USD"), text)
-        text = re.sub(_currency_re["EUR"], lambda m: _expand_currency(m, lang, "EUR"), text)
+        text = _currency_re["GBP"].sub(lambda m: _expand_currency(m, lang, "GBP"), text)
+        text = _currency_re["USD"].sub(lambda m: _expand_currency(m, lang, "USD"), text)
+        text = _currency_re["EUR"].sub(lambda m: _expand_currency(m, lang, "EUR"), text)
     except:
         pass
 
-    text = re.sub(_decimal_number_re, lambda m: _expand_decimal_point(m, lang), text)
-    text = re.sub(_ordinal_re[lang], lambda m: _expand_ordinal(m, lang), text)
-    text = re.sub(_number_re, lambda m: _expand_number(m, lang), text)
+    text = _decimal_number_re.sub(lambda m: _expand_decimal_point(m, lang), text)
+    text = _ordinal_re[lang].sub(lambda m: _expand_ordinal(m, lang), text)
+    text = _number_re.sub(lambda m: _expand_number(m, lang), text)
     return text
 
 
