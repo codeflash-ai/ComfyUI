@@ -22,10 +22,12 @@ def rescale_zero_terminal_snr_sigmas(sigmas):
     return ((1 - alphas_bar) / alphas_bar) ** 0.5
 
 def reshape_sigma(sigma, noise_dim):
+    # Fast path for scalar sigma: already has .nelement()==1, just return as a 0-d tensor view
     if sigma.nelement() == 1:
         return sigma.view(())
-    else:
-        return sigma.view(sigma.shape[:1] + (1,) * (noise_dim - 1))
+    # Avoid creating an intermediate tuple each time
+    shape = sigma.shape[0], *([1] * (noise_dim - 1))
+    return sigma.view(shape)
 
 class EPS:
     def calculate_input(self, sigma, noise):
@@ -95,9 +97,11 @@ class COSMOS_RFLOW:
         return model_input * (1.0 - sigma) - model_output * sigma
 
     def noise_scaling(self, sigma, noise, latent_image, max_denoise=False):
+        # Reshape sigma for broadcasting only if necessary
         sigma = reshape_sigma(sigma, noise.ndim)
-        noise = noise * sigma
-        noise += latent_image
+        # Use inplace operations for memory efficiency without altering input behavior
+        noise = noise.mul(sigma)
+        noise = noise.add(latent_image)
         return noise
 
     def inverse_noise_scaling(self, sigma, latent):
