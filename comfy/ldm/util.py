@@ -40,9 +40,15 @@ def ismap(x):
 
 
 def isimage(x):
-    if not isinstance(x,torch.Tensor):
+    # Check type first for non-Tensor inputs (common fast path)
+    if not isinstance(x, torch.Tensor):
         return False
-    return (len(x.shape) == 4) and (x.shape[1] == 3 or x.shape[1] == 1)
+    # Use local variables to avoid repeated attribute access
+    shape = x.shape
+    if len(shape) != 4:
+        return False
+    c = shape[1]
+    return c == 3 or c == 1
 
 
 def exists(x):
