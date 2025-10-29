@@ -120,7 +120,15 @@ class ModelSamplingDiscrete(torch.nn.Module):
         if zsnr is None:
             zsnr = sampling_settings.get("zsnr", False)
 
-        self._register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=timesteps, linear_start=linear_start, linear_end=linear_end, cosine_s=8e-3, zsnr=zsnr)
+        self._register_schedule(
+            given_betas=None,
+            beta_schedule=beta_schedule,
+            timesteps=timesteps,
+            linear_start=linear_start,
+            linear_end=linear_end,
+            cosine_s=8e-3,
+            zsnr=zsnr
+        )
         self.sigma_data = 1.0
 
     def _register_schedule(self, given_betas=None, beta_schedule="linear", timesteps=1000,
@@ -166,12 +174,28 @@ class ModelSamplingDiscrete(torch.nn.Module):
         return dists.abs().argmin(dim=0).view(sigma.shape).to(sigma.device)
 
     def sigma(self, timestep):
-        t = torch.clamp(timestep.float().to(self.log_sigmas.device), min=0, max=(len(self.sigmas) - 1))
+        # Optimized: perform interpolation in a vectorized manner for better performance
+        # Clamp and interpolate timesteps efficiently
+        # 1. Cast to float and move to log_sigmas.device only once (avoid if already on device)
+        t = timestep.float()
+        if t.device != self.log_sigmas.device:
+            t = t.to(self.log_sigmas.device)
+
+        max_idx = len(self.sigmas) - 1
+        t = torch.clamp(t, min=0, max=max_idx)
+
+        # Compute indices in a single pass, vectorized
         low_idx = t.floor().long()
         high_idx = t.ceil().long()
         w = t.frac()
-        log_sigma = (1 - w) * self.log_sigmas[low_idx] + w * self.log_sigmas[high_idx]
-        return log_sigma.exp().to(timestep.device)
+
+        # Use torch.lerp for efficient linear interpolation
+        log_sigma = torch.lerp(self.log_sigmas[low_idx], self.log_sigmas[high_idx], w)
+        # Only do .exp() on correct device, then move to required device if necessary
+        exp_log_sigma = log_sigma.exp()
+        if exp_log_sigma.device != timestep.device:
+            exp_log_sigma = exp_log_sigma.to(timestep.device)
+        return exp_log_sigma
 
     def percent_to_sigma(self, percent):
         if percent <= 0.0:
