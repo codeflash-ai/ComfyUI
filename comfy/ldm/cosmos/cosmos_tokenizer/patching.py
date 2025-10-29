@@ -77,7 +77,11 @@ class Patcher(torch.nn.Module):
         n = h.shape[0]
         g = x.shape[1]
         hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -127,7 +131,11 @@ class Patcher3D(Patcher):
         n = h.shape[0]
         g = x.shape[1]
         hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -219,7 +227,11 @@ class UnPatcher(torch.nn.Module):
 
         g = x.shape[1] // 4
         hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -272,92 +284,92 @@ class UnPatcher3D(UnPatcher):
 
     def _idwt(self, x, wavelet="haar", mode="reflect", rescale=False):
         dtype = x.dtype
-        h = self.wavelets.to(device=x.device)
 
-        g = x.shape[1] // 8  # split into 8 spatio-temporal filtered tesnors.
-        hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
-        hl = hl.to(dtype=dtype)
-        hh = hh.to(dtype=dtype)
+        # Avoid unnecessary device transfers and computation
+        device = x.device
+        # NOTE: self.wavelets is a registered buffer, already on correct device/dtype if the module is.
+        h = self.wavelets
+        h = (
+            h
+            if h.device == device and h.dtype == dtype
+            else h.to(device=device, dtype=dtype)
+        )
 
+        g = x.shape[1] // 8  # split into 8 spatio-temporal filtered tesnors
+
+        # Prepare _arange on batch device just once
+        _arange = self._arange
+        _arange = (
+            _arange
+            if _arange.device == device and _arange.dtype == h.dtype
+            else _arange.to(device=device, dtype=h.dtype)
+        )
+
+        # Precreate HL and HH for all grouped ops; reduce duplicate flip/reshape/casting
+        hl_base = h.flip([0]).reshape(1, 1, -1)
+        hh_base = (h * ((-1) ** _arange)).reshape(1, 1, -1)
+
+        # Repeat only if more than one group
+        if g > 1:
+            hl = hl_base.repeat(g, 1, 1)
+            hh = hh_base.repeat(g, 1, 1)
+        else:
+            hl = hl_base
+            hh = hh_base
+
+        # Unify .to(dtype) without repeated calls
+        if hl.dtype != dtype:
+            hl = hl.to(dtype=dtype)
+        if hh.dtype != dtype:
+            hh = hh.to(dtype=dtype)
+
+        # Unpack the input (torch.chunk returns a tuple)
         xlll, xllh, xlhl, xlhh, xhll, xhlh, xhhl, xhhh = torch.chunk(x, 8, dim=1)
-        del x
+        del x  # free input memory as early as possible
 
-        # Height height transposed convolutions.
-        xll = F.conv_transpose3d(
-            xlll, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xlll
+        # Avoid repeated unsqueeze() ops by reusing lifted hl/hh for (2,3) and (2,4)
+        hl_23 = hl.unsqueeze(2).unsqueeze(3)
+        hh_23 = hh.unsqueeze(2).unsqueeze(3)
+        hl_24 = hl.unsqueeze(2).unsqueeze(4)
+        hh_24 = hh.unsqueeze(2).unsqueeze(4)
+        hl_34 = hl.unsqueeze(3).unsqueeze(4)
+        hh_34 = hh.unsqueeze(3).unsqueeze(4)
 
-        xll += F.conv_transpose3d(
-            xllh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xllh
+        # Height height transposed convolutions (fuse add after each)
+        xll = F.conv_transpose3d(xlll, hl_23, groups=g, stride=(1, 1, 2))
+        xll += F.conv_transpose3d(xllh, hh_23, groups=g, stride=(1, 1, 2))
+        del xlll, xllh
 
-        xlh = F.conv_transpose3d(
-            xlhl, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xlhl
+        xlh = F.conv_transpose3d(xlhl, hl_23, groups=g, stride=(1, 1, 2))
+        xlh += F.conv_transpose3d(xlhh, hh_23, groups=g, stride=(1, 1, 2))
+        del xlhl, xlhh
 
-        xlh += F.conv_transpose3d(
-            xlhh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xlhh
+        xhl = F.conv_transpose3d(xhll, hl_23, groups=g, stride=(1, 1, 2))
+        xhl += F.conv_transpose3d(xhlh, hh_23, groups=g, stride=(1, 1, 2))
+        del xhll, xhlh
 
-        xhl = F.conv_transpose3d(
-            xhll, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xhll
+        xhh = F.conv_transpose3d(xhhl, hl_23, groups=g, stride=(1, 1, 2))
+        xhh += F.conv_transpose3d(xhhh, hh_23, groups=g, stride=(1, 1, 2))
+        del xhhl, xhhh
 
-        xhl += F.conv_transpose3d(
-            xhlh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xhlh
+        # Handles width transposed convolutions
+        xl = F.conv_transpose3d(xll, hl_24, groups=g, stride=(1, 2, 1))
+        xl += F.conv_transpose3d(xlh, hh_24, groups=g, stride=(1, 2, 1))
+        del xll, xlh
 
-        xhh = F.conv_transpose3d(
-            xhhl, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xhhl
+        xh = F.conv_transpose3d(xhl, hl_24, groups=g, stride=(1, 2, 1))
+        xh += F.conv_transpose3d(xhh, hh_24, groups=g, stride=(1, 2, 1))
+        del xhl, xhh
 
-        xhh += F.conv_transpose3d(
-            xhhh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2)
-        )
-        del xhhh
-
-        # Handles width transposed convolutions.
-        xl = F.conv_transpose3d(
-            xll, hl.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1)
-        )
-        del xll
-
-        xl += F.conv_transpose3d(
-            xlh, hh.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1)
-        )
-        del xlh
-
-        xh = F.conv_transpose3d(
-            xhl, hl.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1)
-        )
-        del xhl
-
-        xh += F.conv_transpose3d(
-            xhh, hh.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1)
-        )
-        del xhh
-
-        # Handles time axis transposed convolutions.
-        x = F.conv_transpose3d(
-            xl, hl.unsqueeze(3).unsqueeze(4), groups=g, stride=(2, 1, 1)
-        )
-        del xl
-
-        x += F.conv_transpose3d(
-            xh, hh.unsqueeze(3).unsqueeze(4), groups=g, stride=(2, 1, 1)
-        )
+        # Handles time axis transposed convolutions
+        x_ = F.conv_transpose3d(xl, hl_34, groups=g, stride=(2, 1, 1))
+        x_ += F.conv_transpose3d(xh, hh_34, groups=g, stride=(2, 1, 1))
+        del xl, xh
 
         if rescale:
-            x = x * (2 * torch.sqrt(torch.tensor(2.0)))
-        return x
+            # torch.sqrt on float literal doesn't require tensor construction per-call
+            x_ = x_ * (2 * torch.sqrt(torch.tensor(2.0, dtype=dtype, device=device)))
+        return x_
 
     def _ihaar(self, x):
         for _ in self.range:
