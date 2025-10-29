@@ -31,7 +31,9 @@ def cal_poly(prev_t, j, taus):
 # Transfer from t to alpha_t.
 
 def t2alpha_fn(beta_0, beta_1, t):
-    return torch.exp(-0.5 * t ** 2 * (beta_1 - beta_0) - t * beta_0)
+    diff = beta_1 - beta_0
+    exponent = -0.5 * diff * t * t - beta_0 * t
+    return torch.exp(exponent)
 
 #----------------------------------------------------------------------------
 
