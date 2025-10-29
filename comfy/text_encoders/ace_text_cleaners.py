@@ -4,6 +4,12 @@
 
 import re
 
+ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen"]
+
+tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
 def japanese_to_romaji(japanese_text):
     """
     Convert Japanese hiragana and katakana to romaji (Latin alphabet representation).
@@ -178,28 +184,27 @@ def number_to_text(num, ordinal=False):
 def _int_to_text(num):
     """Helper function to convert an integer to text"""
 
-    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-            "seventeen", "eighteen", "nineteen"]
-
-    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
-
     if num < 20:
         return ones[num]
 
     if num < 100:
-        return tens[num // 10] + (" " + ones[num % 10] if num % 10 != 0 else "")
+        ten, one = divmod(num, 10)
+        return tens[ten] + (" " + ones[one] if one != 0 else "")
 
     if num < 1000:
-        return ones[num // 100] + " hundred" + (" " + _int_to_text(num % 100) if num % 100 != 0 else "")
+        hundred, rem = divmod(num, 100)
+        return ones[hundred] + " hundred" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000:
-        return _int_to_text(num // 1000) + " thousand" + (" " + _int_to_text(num % 1000) if num % 1000 != 0 else "")
+        thousand, rem = divmod(num, 1000)
+        return _int_to_text(thousand) + " thousand" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000000:
-        return _int_to_text(num // 1000000) + " million" + (" " + _int_to_text(num % 1000000) if num % 1000000 != 0 else "")
+        million, rem = divmod(num, 1000000)
+        return _int_to_text(million) + " million" + (" " + _int_to_text(rem) if rem != 0 else "")
 
-    return _int_to_text(num // 1000000000) + " billion" + (" " + _int_to_text(num % 1000000000) if num % 1000000000 != 0 else "")
+    billion, rem = divmod(num, 1000000000)
+    return _int_to_text(billion) + " billion" + (" " + _int_to_text(rem) if rem != 0 else "")
 
 
 def _digit_to_text(digit):
@@ -262,9 +267,21 @@ _symbols_multilingual = {
 
 
 def expand_symbols_multilingual(text, lang="en"):
-    for regex, replacement in _symbols_multilingual[lang]:
-        text = re.sub(regex, replacement, text)
-        text = text.replace("  ", " ")  # Ensure there are no double spaces
+    # Precompute all replacements before applying substitutions
+    replacements = _symbols_multilingual[lang]
+    # Reduce number of re.sub calls and .replace calls for better performance
+    # Most efficient to build the final string in memory
+
+    # Perform all regex substitutions up front
+    # Using a list to build the replacements provides better performance for more matches
+    for regex, replacement in replacements:
+        text = regex.sub(replacement, text)
+
+    # Only replace double spaces if detected in result
+    if "  " in text:
+        # Repeatedly replace double spaces until none left (handles more than 2 spaces)
+        while "  " in text:
+            text = text.replace("  ", " ")
     return text.strip()
 
 
