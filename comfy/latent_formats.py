@@ -184,16 +184,21 @@ class Mochi(LatentFormat):
 
     def __init__(self):
         self.scale_factor = 1.0
-        self.latents_mean = torch.tensor([-0.06730895953510081, -0.038011381506090416, -0.07477820912866141,
-                                          -0.05565264470995561, 0.012767231469026969, -0.04703542746246419,
-                                          0.043896967884726704, -0.09346305707025976, -0.09918314763016893,
-                                          -0.008729793427399178, -0.011931556316503654, -0.0321993391887285]).view(1, self.latent_channels, 1, 1, 1)
-        self.latents_std = torch.tensor([0.9263795028493863, 0.9248894543193766, 0.9393059390890617,
-                                         0.959253732819592, 0.8244560132752793, 0.917259975397747,
-                                         0.9294154431013696, 1.3720942357788521, 0.881393668867029,
-                                         0.9168315692124348, 0.9185249279345552, 0.9274757570805041]).view(1, self.latent_channels, 1, 1, 1)
+        # Store dtype and device independent constants as torch tensors (unchanged)
+        self.latents_mean = torch.tensor([
+            -0.06730895953510081, -0.038011381506090416, -0.07477820912866141,
+            -0.05565264470995561, 0.012767231469026969, -0.04703542746246419,
+            0.043896967884726704, -0.09346305707025976, -0.09918314763016893,
+            -0.008729793427399178, -0.011931556316503654, -0.0321993391887285
+        ]).view(1, self.latent_channels, 1, 1, 1)
+        self.latents_std = torch.tensor([
+            0.9263795028493863, 0.9248894543193766, 0.9393059390890617,
+            0.959253732819592, 0.8244560132752793, 0.917259975397747,
+            0.9294154431013696, 1.3720942357788521, 0.881393668867029,
+            0.9168315692124348, 0.9185249279345552, 0.9274757570805041
+        ]).view(1, self.latent_channels, 1, 1, 1)
 
-        self.latent_rgb_factors =[
+        self.latent_rgb_factors = [
             [-0.0069, -0.0045,  0.0018],
             [ 0.0154, -0.0692, -0.0274],
             [ 0.0333,  0.0019,  0.0206],
@@ -211,9 +216,26 @@ class Mochi(LatentFormat):
         self.taesd_decoder_name = None #TODO
 
     def process_in(self, latent):
-        latents_mean = self.latents_mean.to(latent.device, latent.dtype)
-        latents_std = self.latents_std.to(latent.device, latent.dtype)
-        return (latent - latents_mean) * self.scale_factor / latents_std
+        # Avoid re-casting/allocating if already on correct device/type
+        if (
+            self.latents_mean.device == latent.device
+            and self.latents_mean.dtype == latent.dtype
+            and self.latents_std.device == latent.device
+            and self.latents_std.dtype == latent.dtype
+        ):
+            latents_mean = self.latents_mean
+            latents_std = self.latents_std
+        else:
+            latents_mean = self.latents_mean.to(latent.device, latent.dtype, copy=False)
+            latents_std = self.latents_std.to(latent.device, latent.dtype, copy=False)
+        # Fused computation to minimize temporary tensor allocations
+        # (latent - latents_mean) * scale_factor / latents_std
+        # scale_factor==1.0 so no-op multiplication, but keep for generality & behavioral preservation
+        result = torch.sub(latent, latents_mean)
+        if self.scale_factor != 1.0:
+            result = result * self.scale_factor
+        result = torch.div(result, latents_std)
+        return result
 
     def process_out(self, latent):
         latents_mean = self.latents_mean.to(latent.device, latent.dtype)
