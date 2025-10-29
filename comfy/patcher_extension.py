@@ -95,7 +95,8 @@ class WrapperExecutor:
         #       the class instance at runtime via executor.class_obj
         self.original = original
         self.class_obj = class_obj
-        self.wrappers = wrappers.copy()
+        # Avoid unnecessary copy; assume outside logic doesn't mutate it between WrapperExecutor uses.
+        self.wrappers = wrappers
         self.idx = idx
         self.is_last = idx == len(wrappers)
 
@@ -106,10 +107,11 @@ class WrapperExecutor:
 
     def execute(self, *args, **kwargs):
         """Used to initiate executor internally - DO NOT use this if you received executor in wrapper."""
-        args = list(args)
-        kwargs = dict(kwargs)
+        # Avoid unnecessary copies: only copy if we're about to call self.original
         if self.is_last:
-            return self.original(*args, **kwargs)
+            # These copies prevent accidental mutation in self.original(). Only copy if necessary.
+            return self.original(list(args), dict(kwargs))
+        # Fast-path: just forward as-is, don't copy args/kwargs
         return self.wrappers[self.idx](self, *args, **kwargs)
 
     def _create_next_executor(self) -> 'WrapperExecutor':
