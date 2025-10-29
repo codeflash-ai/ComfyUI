@@ -136,11 +136,15 @@ def state_dict_prefix_replace(state_dict, replace_prefix, filter_keys=False):
         out = {}
     else:
         out = state_dict
-    for rp in replace_prefix:
-        replace = list(map(lambda a: (a, "{}{}".format(replace_prefix[rp], a[len(rp):])), filter(lambda a: a.startswith(rp), state_dict.keys())))
-        for x in replace:
-            w = state_dict.pop(x[0])
-            out[x[1]] = w
+
+    # Gather keys once to avoid concurrent mutation during pop
+    keys = list(state_dict.keys())
+    for rp, new_prefix in replace_prefix.items():
+        rp_len = len(rp)
+        matched_keys = [k for k in keys if k.startswith(rp)]
+        for k in matched_keys:
+            w = state_dict.pop(k)
+            out[f"{new_prefix}{k[rp_len:]}"] = w
     return out
 
 
