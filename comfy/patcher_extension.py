@@ -101,13 +101,19 @@ class WrapperExecutor:
 
     def __call__(self, *args, **kwargs):
         """Calls the next wrapper or original function, whichever is appropriate."""
-        new_executor = self._create_next_executor()
+        # Inlining and avoiding creating unnecessary variables
+        new_idx = self.idx + 1
+        if new_idx > len(self.wrappers):
+            raise Exception("Wrapper idx exceeded available wrappers; something went very wrong.")
+        if self.class_obj is None:
+            new_executor = WrapperExecutor(self.original, None, self.wrappers, new_idx)
+        else:
+            new_executor = WrapperExecutor(self.original, self.class_obj, self.wrappers, new_idx)
         return new_executor.execute(*args, **kwargs)
 
     def execute(self, *args, **kwargs):
         """Used to initiate executor internally - DO NOT use this if you received executor in wrapper."""
-        args = list(args)
-        kwargs = dict(kwargs)
+        # Avoid copying args/kwargs if not needed (as per behavioral requirements – preserve semantics)
         if self.is_last:
             return self.original(*args, **kwargs)
         return self.wrappers[self.idx](self, *args, **kwargs)
