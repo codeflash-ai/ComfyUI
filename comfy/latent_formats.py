@@ -44,8 +44,8 @@ class SDXL(LatentFormat):
 class SDXL_Playground_2_5(LatentFormat):
     def __init__(self):
         self.scale_factor = 0.5
-        self.latents_mean = torch.tensor([-1.6574, 1.886, -1.383, 2.5155]).view(1, 4, 1, 1)
-        self.latents_std = torch.tensor([8.4927, 5.9022, 6.5498, 5.2299]).view(1, 4, 1, 1)
+        self.latents_mean = torch.tensor([-1.6574, 1.886, -1.383, 2.5155], dtype=torch.float32).view(1, 4, 1, 1)
+        self.latents_std = torch.tensor([8.4927, 5.9022, 6.5498, 5.2299], dtype=torch.float32).view(1, 4, 1, 1)
 
         self.latent_rgb_factors = [
                     #   R        G        B
@@ -62,9 +62,18 @@ class SDXL_Playground_2_5(LatentFormat):
         return (latent - latents_mean) * self.scale_factor / latents_std
 
     def process_out(self, latent):
-        latents_mean = self.latents_mean.to(latent.device, latent.dtype)
-        latents_std = self.latents_std.to(latent.device, latent.dtype)
-        return latent * latents_std / self.scale_factor + latents_mean
+        latents_mean = self.latents_mean
+        latents_std = self.latents_std
+        
+        if latents_mean.device != latent.device or latents_mean.dtype != latent.dtype:
+            latents_mean = latents_mean.to(latent.device, latent.dtype)
+        if latents_std.device != latent.device or latents_std.dtype != latent.dtype:
+            latents_std = latents_std.to(latent.device, latent.dtype)
+            
+        result = torch.mul(latent, latents_std)
+        result.div_(self.scale_factor)
+        result.add_(latents_mean)
+        return result
 
 
 class SD_X4(LatentFormat):
