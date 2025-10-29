@@ -444,13 +444,23 @@ class Wan21(LatentFormat):
             3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160
         ]).view(1, self.latent_channels, 1, 1, 1)
 
-
         self.taesd_decoder_name = None #TODO
 
     def process_in(self, latent):
-        latents_mean = self.latents_mean.to(latent.device, latent.dtype)
-        latents_std = self.latents_std.to(latent.device, latent.dtype)
-        return (latent - latents_mean) * self.scale_factor / latents_std
+        # Avoid unnecessary copying and allocation if already correct type/device
+        device = latent.device
+        dtype = latent.dtype
+        latents_mean = self.latents_mean
+        latents_std = self.latents_std
+        if latents_mean.device != device or latents_mean.dtype != dtype:
+            latents_mean = latents_mean.to(device=device, dtype=dtype, non_blocking=True)
+        if latents_std.device != device or latents_std.dtype != dtype:
+            latents_std = latents_std.to(device=device, dtype=dtype, non_blocking=True)
+        # Fused arithmetic for memory-efficient computation
+        tmp = latent.sub(latents_mean)
+        tmp.mul_(self.scale_factor)
+        tmp.div_(latents_std)
+        return tmp
 
     def process_out(self, latent):
         latents_mean = self.latents_mean.to(latent.device, latent.dtype)
