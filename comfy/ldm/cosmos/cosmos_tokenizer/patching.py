@@ -77,7 +77,11 @@ class Patcher(torch.nn.Module):
         n = h.shape[0]
         g = x.shape[1]
         hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -127,7 +131,11 @@ class Patcher3D(Patcher):
         n = h.shape[0]
         g = x.shape[1]
         hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -219,7 +227,11 @@ class UnPatcher(torch.nn.Module):
 
         g = x.shape[1] // 4
         hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -276,7 +288,11 @@ class UnPatcher3D(UnPatcher):
 
         g = x.shape[1] // 8  # split into 8 spatio-temporal filtered tesnors.
         hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hl = hl.to(dtype=dtype)
         hh = hh.to(dtype=dtype)
 
@@ -366,12 +382,26 @@ class UnPatcher3D(UnPatcher):
         return x
 
     def _iarrange(self, x):
-        x = rearrange(
-            x,
-            "b (c p1 p2 p3) t h w -> b c (t p1) (h p2) (w p3)",
-            p1=self.patch_size,
-            p2=self.patch_size,
-            p3=self.patch_size,
-        )
+        if (
+            isinstance(x, torch.Tensor)
+            and x.dim() == 5
+            and x.shape[1] % (self.patch_size**3) == 0
+            and x.is_contiguous()
+        ):
+            b, cp123, t, h, w = x.shape
+            c = cp123 // (self.patch_size**3)
+            x = x.view(b, c, self.patch_size, self.patch_size, self.patch_size, t, h, w)
+            x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+            x = x.view(
+                b, c, t * self.patch_size, h * self.patch_size, w * self.patch_size
+            )
+        else:
+            x = rearrange(
+                x,
+                "b (c p1 p2 p3) t h w -> b c (t p1) (h p2) (w p3)",
+                p1=self.patch_size,
+                p2=self.patch_size,
+                p3=self.patch_size,
+            )
         x = x[:, :, self.patch_size - 1 :, ...]
         return x
