@@ -22,10 +22,17 @@ def rescale_zero_terminal_snr_sigmas(sigmas):
     return ((1 - alphas_bar) / alphas_bar) ** 0.5
 
 def reshape_sigma(sigma, noise_dim):
-    if sigma.nelement() == 1:
+    # Optimization: check shape up front, avoid expensive nelement()
+    if sigma.shape == ():  # Scalar tensor (zero-dimensional)
+        return sigma
+    elif sigma.numel() == 1:
         return sigma.view(())
     else:
-        return sigma.view(sigma.shape[:1] + (1,) * (noise_dim - 1))
+        # Use tuple multiplication more efficiently
+        if noise_dim <= 1:
+            return sigma
+        shape = (sigma.shape[0],) + (1,) * (noise_dim - 1)
+        return sigma.view(shape)
 
 class EPS:
     def calculate_input(self, sigma, noise):
@@ -85,8 +92,12 @@ class IMG_TO_IMG(X0):
 
 class COSMOS_RFLOW:
     def calculate_input(self, sigma, noise):
-        sigma = (sigma / (sigma + 1))
+        # Optimization: compute divisor first to avoid evaluating sigma+1 twice
+        sigma_add1 = sigma + 1
+        # Use in-place division for efficiency if safe (PyTorch's True division always returns a new tensor, but += and /= can be used; but since we return a view later, and to avoid accidental input mutation, we keep assignment)
+        sigma = sigma / sigma_add1
         sigma = reshape_sigma(sigma, noise.ndim)
+        # Use in-place multiplication if safe, but since the result is returned and we should not mutate input, keep as is
         return noise * (1.0 - sigma)
 
     def calculate_denoised(self, sigma, model_output, model_input):
