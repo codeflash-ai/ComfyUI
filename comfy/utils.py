@@ -107,10 +107,13 @@ def save_torch_file(sd, ckpt, metadata=None):
 
 def calculate_parameters(sd, prefix=""):
     params = 0
-    for k in sd.keys():
-        if k.startswith(prefix):
-            w = sd[k]
+    if prefix == "":
+        for w in sd.values():
             params += w.nelement()
+    else:
+        for k, w in sd.items():
+            if k.startswith(prefix):
+                params += w.nelement()
     return params
 
 def weight_dtype(sd, prefix=""):
