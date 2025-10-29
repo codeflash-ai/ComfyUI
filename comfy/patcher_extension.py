@@ -95,7 +95,8 @@ class WrapperExecutor:
         #       the class instance at runtime via executor.class_obj
         self.original = original
         self.class_obj = class_obj
-        self.wrappers = wrappers.copy()
+        # Avoid unnecessary copy of wrappers list for performance
+        self.wrappers = wrappers
         self.idx = idx
         self.is_last = idx == len(wrappers)
 
