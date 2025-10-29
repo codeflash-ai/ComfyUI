@@ -374,7 +374,8 @@ class ModelSamplingFlux(torch.nn.Module):
             return 1.0
         if percent >= 1.0:
             return 0.0
-        return flux_time_shift(self.shift, 1.0, 1.0 - percent)
+        e_mu = math.exp(self.shift)
+        return e_mu / (e_mu + (1 / (1.0 - percent) - 1))
 
 
 class ModelSamplingCosmosRFlow(ModelSamplingContinuousEDM):
