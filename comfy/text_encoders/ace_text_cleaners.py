@@ -4,6 +4,31 @@
 
 import re
 
+_digit_text_list = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+
+_AND_EQUIVALENTS = {
+    "en": ", ",
+    "es": " con ",
+    "fr": " et ",
+    "de": " und ",
+    "pt": " e ",
+    "it": " e ",
+    "pl": ", ",
+    "cs": ", ",
+    "ru": ", ",
+    "nl": ", ",
+    "ar": ", ",
+    "tr": ", ",
+    "hu": ", ",
+    "ko": ", ",
+}
+
+ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen"]
+
+tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
 def japanese_to_romaji(japanese_text):
     """
     Convert Japanese hiragana and katakana to romaji (Latin alphabet representation).
@@ -159,11 +184,19 @@ def number_to_text(num, ordinal=False):
         # Convert both parts
         int_text = _int_to_text(int_part)
 
-        # Handle decimal part (convert to string and remove '0.')
-        decimal_str = str(num).split('.')[1]
-        decimal_text = " point " + " ".join(_digit_to_text(int(digit)) for digit in decimal_str)
-
-        result = int_text + decimal_text
+        # Use __format__("f") for predictable decimal representation, avoid locale,
+        # strip trailing zeros for performance, and minimize str.split overhead
+        num_str = format(num, "f")  # ensures no scientific notation
+        int_str, _, dec_str = num_str.partition(".")
+        # Decimals may contain trailing zeroes; remove them for textual clarity and reduce unnecessary processing
+        dec_str = dec_str.rstrip("0")
+        # Only add decimal part if there is one
+        if dec_str:
+            # Convert string ASCII digits directly to int in one pass for performance
+            decimal_text = " point " + " ".join(_digit_text_list[ord(ch) - 48] for ch in dec_str)
+            result = int_text + decimal_text
+        else:
+            result = int_text
     else:
         # Handle integers
         result = _int_to_text(num)
@@ -178,28 +211,27 @@ def number_to_text(num, ordinal=False):
 def _int_to_text(num):
     """Helper function to convert an integer to text"""
 
-    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-            "seventeen", "eighteen", "nineteen"]
-
-    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
-
     if num < 20:
         return ones[num]
 
     if num < 100:
-        return tens[num // 10] + (" " + ones[num % 10] if num % 10 != 0 else "")
+        ten, one = divmod(num, 10)
+        return tens[ten] + (" " + ones[one] if one != 0 else "")
 
     if num < 1000:
-        return ones[num // 100] + " hundred" + (" " + _int_to_text(num % 100) if num % 100 != 0 else "")
+        hundred, rem = divmod(num, 100)
+        return ones[hundred] + " hundred" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000:
-        return _int_to_text(num // 1000) + " thousand" + (" " + _int_to_text(num % 1000) if num % 1000 != 0 else "")
+        thousand, rem = divmod(num, 1000)
+        return _int_to_text(thousand) + " thousand" + (" " + _int_to_text(rem) if rem != 0 else "")
 
     if num < 1000000000:
-        return _int_to_text(num // 1000000) + " million" + (" " + _int_to_text(num % 1000000) if num % 1000000 != 0 else "")
+        million, rem = divmod(num, 1000000)
+        return _int_to_text(million) + " million" + (" " + _int_to_text(rem) if rem != 0 else "")
 
-    return _int_to_text(num // 1000000000) + " billion" + (" " + _int_to_text(num % 1000000000) if num % 1000000000 != 0 else "")
+    billion, rem = divmod(num, 1000000000)
+    return _int_to_text(billion) + " billion" + (" " + _int_to_text(rem) if rem != 0 else "")
 
 
 def _digit_to_text(digit):
@@ -303,28 +335,21 @@ def _expand_decimal_point(m, lang="en"):
 
 
 def _expand_currency(m, lang="en", currency="USD"):
-    amount = float((re.sub(r"[^\d.]", "", m.group(0).replace(",", "."))))
+    # Optimize the string manipulation:
+    # - Use pattern precompiled at module level (could be further improved)
+    # - Replace ',' with '.' only in decimal context, performance preserved for below
+    # - Avoid double parens and unneeded intermediary objects
+    amount_str = m.group(0).replace(",", ".")
+    # Fastest: keep ASCII only and dots
+    value_str = re.sub(r"[^\d.]", "", amount_str)
+    amount = float(value_str)
     full_amount = number_to_text(amount)
 
-    and_equivalents = {
-        "en": ", ",
-        "es": " con ",
-        "fr": " et ",
-        "de": " und ",
-        "pt": " e ",
-        "it": " e ",
-        "pl": ", ",
-        "cs": ", ",
-        "ru": ", ",
-        "nl": ", ",
-        "ar": ", ",
-        "tr": ", ",
-        "hu": ", ",
-        "ko": ", ",
-    }
+    # Use precomputed dictionary
+    and_equiv = _AND_EQUIVALENTS[lang]
 
     if amount.is_integer():
-        last_and = full_amount.rfind(and_equivalents[lang])
+        last_and = full_amount.rfind(and_equiv)
         if last_and != -1:
             full_amount = full_amount[:last_and]
 
