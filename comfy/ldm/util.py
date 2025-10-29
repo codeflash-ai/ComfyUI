@@ -4,8 +4,6 @@ import logging
 import torch
 from torch import optim
 import numpy as np
-
-from inspect import isfunction
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -50,9 +48,9 @@ def exists(x):
 
 
 def default(val, d):
-    if exists(val):
+    if val is not None:
         return val
-    return d() if isfunction(d) else d
+    return d() if callable(d) else d
 
 
 def mean_flat(tensor):
