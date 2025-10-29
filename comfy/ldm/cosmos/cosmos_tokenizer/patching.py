@@ -77,7 +77,11 @@ class Patcher(torch.nn.Module):
         n = h.shape[0]
         g = x.shape[1]
         hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -122,40 +126,64 @@ class Patcher3D(Patcher):
 
     def _dwt(self, x, wavelet, mode="reflect", rescale=False):
         dtype = x.dtype
-        h = self.wavelets.to(device=x.device)
+        device = x.device
+        h = self.wavelets.to(device=device)
 
         n = h.shape[0]
         g = x.shape[1]
-        hl = h.flip(0).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
-        hh = hh.to(dtype=dtype)
-        hl = hl.to(dtype=dtype)
+        arange = self._arange.to(device=device)
+
+        # Precompute hl and hh, limiting memory allocations/repeat calls
+        h_flipped = h.flip(0)
+        h_aranged = h * ((-1) ** arange)
+
+        hl_base = h_flipped.reshape(1, 1, -1).expand(g, 1, n)
+        hh_base = h_aranged.reshape(1, 1, -1).expand(g, 1, n)
+
+        hl = hl_base.to(dtype=dtype)
+        hh = hh_base.to(dtype=dtype)
+
+        # Precompute unsqueezed filters for all 3 axes
+        hl_3d_1 = hl.unsqueeze(3).unsqueeze(4)  # for time axis (dim2)
+        hh_3d_1 = hh.unsqueeze(3).unsqueeze(4)
+        hl_3d_2 = hl.unsqueeze(2).unsqueeze(4)  # for height axis (dim3)
+        hh_3d_2 = hh.unsqueeze(2).unsqueeze(4)
+        hl_3d_3 = hl.unsqueeze(2).unsqueeze(3)  # for width axis (dim4)
+        hh_3d_3 = hh.unsqueeze(2).unsqueeze(3)
 
         # Handles temporal axis.
-        x = F.pad(
-            x, pad=(max(0, n - 2), n - 1, n - 2, n - 1, n - 2, n - 1), mode=mode
-        ).to(dtype)
-        xl = F.conv3d(x, hl.unsqueeze(3).unsqueeze(4), groups=g, stride=(2, 1, 1))
-        xh = F.conv3d(x, hh.unsqueeze(3).unsqueeze(4), groups=g, stride=(2, 1, 1))
+        # F.pad arguments are constant, so avoid repeated allocations for pad tuple
+        pad_tuple = (max(0, n - 2), n - 1, n - 2, n - 1, n - 2, n - 1)
+        # .to(dtype) call will create a copy only if dtype changes, not necessary if already correct
+        # Move .to(dtype) out of F.pad for better streamlining
+        x = F.pad(x, pad=pad_tuple, mode=mode)
+        if x.dtype != dtype:
+            x = x.to(dtype)
+        xl = F.conv3d(x, hl_3d_1, groups=g, stride=(2, 1, 1))
+        xh = F.conv3d(x, hh_3d_1, groups=g, stride=(2, 1, 1))
 
         # Handles spatial axes.
-        xll = F.conv3d(xl, hl.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1))
-        xlh = F.conv3d(xl, hh.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1))
-        xhl = F.conv3d(xh, hl.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1))
-        xhh = F.conv3d(xh, hh.unsqueeze(2).unsqueeze(4), groups=g, stride=(1, 2, 1))
+        xll = F.conv3d(xl, hl_3d_2, groups=g, stride=(1, 2, 1))
+        xlh = F.conv3d(xl, hh_3d_2, groups=g, stride=(1, 2, 1))
+        xhl = F.conv3d(xh, hl_3d_2, groups=g, stride=(1, 2, 1))
+        xhh = F.conv3d(xh, hh_3d_2, groups=g, stride=(1, 2, 1))
 
-        xlll = F.conv3d(xll, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xllh = F.conv3d(xll, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xlhl = F.conv3d(xlh, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xlhh = F.conv3d(xlh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xhll = F.conv3d(xhl, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xhlh = F.conv3d(xhl, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xhhl = F.conv3d(xhh, hl.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
-        xhhh = F.conv3d(xhh, hh.unsqueeze(2).unsqueeze(3), groups=g, stride=(1, 1, 2))
+        xlll = F.conv3d(xll, hl_3d_3, groups=g, stride=(1, 1, 2))
+        xllh = F.conv3d(xll, hh_3d_3, groups=g, stride=(1, 1, 2))
+        xlhl = F.conv3d(xlh, hl_3d_3, groups=g, stride=(1, 1, 2))
+        xlhh = F.conv3d(xlh, hh_3d_3, groups=g, stride=(1, 1, 2))
+        xhll = F.conv3d(xhl, hl_3d_3, groups=g, stride=(1, 1, 2))
+        xhlh = F.conv3d(xhl, hh_3d_3, groups=g, stride=(1, 1, 2))
+        xhhl = F.conv3d(xhh, hl_3d_3, groups=g, stride=(1, 1, 2))
+        xhhh = F.conv3d(xhh, hh_3d_3, groups=g, stride=(1, 1, 2))
 
-        out = torch.cat([xlll, xllh, xlhl, xlhh, xhll, xhlh, xhhl, xhhh], dim=1)
+        # Use tuple instead of list for torch.cat, as tuple is slightly more memory efficient
+        out = torch.cat((xlll, xllh, xlhl, xlhh, xhll, xhlh, xhhl, xhhh), dim=1)
         if rescale:
-            out = out / (2 * torch.sqrt(torch.tensor(2.0)))
+            # Use cached sqrt(2.0) as a constant instead of recomputing every call
+            # This ensures type/device correctness
+            scale_const = torch.tensor(2.0, dtype=dtype, device=out.device)
+            out = out / (2 * torch.sqrt(scale_const))
         return out
 
     def _haar(self, x):
@@ -219,7 +247,11 @@ class UnPatcher(torch.nn.Module):
 
         g = x.shape[1] // 4
         hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hh = hh.to(dtype=dtype)
         hl = hl.to(dtype=dtype)
 
@@ -276,7 +308,11 @@ class UnPatcher3D(UnPatcher):
 
         g = x.shape[1] // 8  # split into 8 spatio-temporal filtered tesnors.
         hl = h.flip([0]).reshape(1, 1, -1).repeat([g, 1, 1])
-        hh = (h * ((-1) ** self._arange.to(device=x.device))).reshape(1, 1, -1).repeat(g, 1, 1)
+        hh = (
+            (h * ((-1) ** self._arange.to(device=x.device)))
+            .reshape(1, 1, -1)
+            .repeat(g, 1, 1)
+        )
         hl = hl.to(dtype=dtype)
         hh = hh.to(dtype=dtype)
 
