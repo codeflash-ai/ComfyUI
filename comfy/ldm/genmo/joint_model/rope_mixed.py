@@ -1,4 +1,4 @@
-#original code from https://github.com/genmoai/models under apache 2.0 license
+# original code from https://github.com/genmoai/models under apache 2.0 license
 
 # import functools
 import math
@@ -82,7 +82,10 @@ def compute_mixed_rotation(
         freqs_sin: [N, num_heads, num_freqs] - sine components
     """
     assert freqs.ndim == 3
-    freqs_sum = torch.einsum("Nd,dhf->Nhf", pos.to(freqs), freqs)
+    if pos.dtype != freqs.dtype or pos.device != freqs.device:
+        pos = pos.to(freqs)
+    freqs_sum = pos @ freqs.view(3, -1)
+    freqs_sum = freqs_sum.view(-1, freqs.shape[1], freqs.shape[2])
     freqs_cos = torch.cos(freqs_sum)
     freqs_sin = torch.sin(freqs_sum)
     return freqs_cos, freqs_sin
