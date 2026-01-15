@@ -163,7 +163,8 @@ class ModelSamplingDiscrete(torch.nn.Module):
     def timestep(self, sigma):
         log_sigma = sigma.log()
         dists = log_sigma.to(self.log_sigmas.device) - self.log_sigmas[:, None]
-        return dists.abs().argmin(dim=0).view(sigma.shape).to(sigma.device)
+        dists.abs_()
+        return dists.argmin(dim=0).view(sigma.shape).to(sigma.device)
 
     def sigma(self, timestep):
         t = torch.clamp(timestep.float().to(self.log_sigmas.device), min=0, max=(len(self.sigmas) - 1))
