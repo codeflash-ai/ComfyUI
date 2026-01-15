@@ -220,7 +220,10 @@ class ModelSamplingContinuousEDM(torch.nn.Module):
         return 0.25 * sigma.log()
 
     def sigma(self, timestep):
-        return (timestep / 0.25).exp()
+        # Avoid intermediate tensor division by using multiplication,
+        # which improves performance for both scalar and tensor input.
+        # 1 / 0.25 = 4.0, so (timestep / 0.25) == (timestep * 4.0)
+        return (timestep * 4.0).exp()
 
     def percent_to_sigma(self, percent):
         if percent <= 0.0:
