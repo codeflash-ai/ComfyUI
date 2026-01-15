@@ -338,7 +338,14 @@ class StableCascadeSampling(ModelSamplingDiscrete):
 
 
 def flux_time_shift(mu: float, sigma: float, t):
-    return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
+    exp_mu = math.exp(mu)
+    t_inv_minus_1 = 1 / t - 1
+    # Since sigma is always 1.0 in all current usages, fast path for sigma==1.0
+    if sigma == 1.0:
+        denom = exp_mu + t_inv_minus_1
+    else:
+        denom = exp_mu + t_inv_minus_1 ** sigma
+    return exp_mu / denom
 
 class ModelSamplingFlux(torch.nn.Module):
     def __init__(self, model_config=None):
@@ -367,6 +374,7 @@ class ModelSamplingFlux(torch.nn.Module):
         return sigma
 
     def sigma(self, timestep):
+        # Pass sigma=1.0 as always. Short-circuit flux_time_shift for this case.
         return flux_time_shift(self.shift, 1.0, timestep)
 
     def percent_to_sigma(self, percent):
