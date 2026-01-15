@@ -321,10 +321,29 @@ class StableCascadeSampling(ModelSamplingDiscrete):
         return ((1 - alpha_cumprod) / alpha_cumprod) ** 0.5
 
     def timestep(self, sigma):
-        var = 1 / ((sigma * sigma) + 1)
-        var = var.clamp(0, 1.0)
-        s, min_var = self.cosine_s.to(var.device), self._init_alpha_cumprod.to(var.device)
-        t = (((var * min_var) ** 0.5).acos() / (torch.pi * 0.5)) * (1 + s) - s
+        # Compute sigma squared efficiently and reuse for denominator
+        sigma_sq = sigma * sigma
+        # Use torch.reciprocal for faster inversion; fuse operations for var computation
+        var = torch.reciprocal(sigma_sq + 1)
+        # In-place clamp to avoid allocation
+        var.clamp_(0, 1.0)
+        # Move tensor only if necessary (avoid repeated .to, and move once for both s and min_var)
+        device = var.device
+        if self.cosine_s.device != device or self._init_alpha_cumprod.device != device:
+            s = self.cosine_s.to(device)
+            min_var = self._init_alpha_cumprod.to(device)
+        else:
+            s = self.cosine_s
+            min_var = self._init_alpha_cumprod
+        # Fuse operations where possible for t
+        tmp = var * min_var
+        tmp.sqrt_()
+        # Use acos in-place if possible
+        t_acos = tmp.acos()
+        t = t_acos / (torch.pi * 0.5)
+        # Avoid repeated computation of (1 + s)
+        scale = 1 + s
+        t = t * scale - s
         return t
 
     def percent_to_sigma(self, percent):
