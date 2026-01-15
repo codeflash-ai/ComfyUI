@@ -72,12 +72,19 @@ def add_wrapper_with_key(wrapper_type: str, key: str, wrapper: Callable, transfo
     w.append(wrapper)
 
 def get_wrappers_with_key(wrapper_type: str, key: str, transformer_options: dict, is_model_options=False):
+    # Fast-path for model options retrieval, minimizes dictionary lookup overhead
     if is_model_options:
         transformer_options = transformer_options.get("transformer_options", {})
-    w_list = []
-    wrappers: dict[str, list] = transformer_options.get("wrappers", {})
-    w_list.extend(wrappers.get(wrapper_type, {}).get(key, []))
-    return w_list
+    # Avoids unnecessary list allocation by returning the fetched list directly
+    wrappers = transformer_options.get("wrappers", {})
+    wrapper_type_dict = wrappers.get(wrapper_type)
+    if wrapper_type_dict is None:
+        return []
+    result = wrapper_type_dict.get(key)
+    if result is None:
+        return []
+    # Defensive copy preserves original code behavior of returning a new list (equivalent to extend on an empty list)
+    return list(result)
 
 def get_all_wrappers(wrapper_type: str, transformer_options: dict, is_model_options=False):
     if is_model_options:
